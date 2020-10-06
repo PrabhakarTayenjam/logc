@@ -1,0 +1,121 @@
+Version history
+===========================================================
+Initial version: 25-Sep-2020
+
+
+Introduction
+===========================================================
+File I/O is a slow process. So, if for every log message a
+file I/O is perform, it will hurt the overall performance
+of the application. It will be much faster if the log messages
+are collected in a log buffer and write to the log file
+afterwards because there will be less file I/O. But if the
+application crashes before writing the log messages in the
+log buffer to the file, important log messages will be lost.
+So, to mitigate this issue, the log buffer will be in a shared
+memory bewtween a log server and a log client.
+
+Logc Requirement
+===========================================================
+* Should not do file I/O for every log message.
+* Client will communicate with server through tcp connection.
+* Log messages in the buffer should not get lost if the program
+  crashes before writing it to the file.
+
+Logc server requirement
+------------------------------------------------------------
+* Should be able to handle multiple clients
+* Server needs the following from a client:
+    * log file path
+    * append
+* Server needs to maintain a hashmap for client info with client
+  connection fd as key
+* Actions in server (init log, write log) will be perform according
+  to the request from client
+
+Logc client requirement
+-----------------------------------------------------------
+* Should not do file I/O
+* Collect the log messages in a wait-free ring buffer. The buffer
+  will in shared memory with the server
+
+Logc Client Design
+===========================================================
+* Send log init request to server with following informations:
+    * log file path
+    * append
+* Wait for response of server
+    * if success, continue (a shared memory name will be return)
+        * Create a shared memory with the name
+        * Use the shared memory for log biffer
+    * if failed, handle error
+* Collect log messages in the buffer
+* If the buffer usage threshold is reached, send write request
+  to the server with the following information.
+    * start offset
+    * end offset
+    * marker
+* When the process is completed, send close request
+
+Logc Server Design
+===========================================================
+* Init the server and wait for clients to connect
+* If a client connects for the first time, add entry to the hash map
+* If init request is recieved:
+    * add the information about the client in the hash map
+    * create a unique shared memory file name
+    * create a shared memory with that file name and add to hash map
+    * return the shared memory file name to the client
+    * If failed, return the error code
+* If write request is recieved:
+    * Lookup the hash map and get the buffer
+    * Write the buffer from start to end offset to the log file
+* If close request is recieved:
+    * Lookup the hash map and get the information about the client.
+    * Write the log messages in buffer to the log file if there is any.
+    * Close the file and free up memory.
+* If the client program crashes, handle as close request
+
+
+Request Design
+=============================================================
+
+Init request:     Code = 1
+-----------------------------------------
+
+      parameter   size
+      ------------------
+      code          1
+      append        1
+      file path     variable with null termination
+
+
+Write request     Code = 2
+------------------------------------------
+
+      parameter   size
+      ------------------
+      code          1
+      r_offset      4
+      w_offset      4
+      marker        4
+
+
+Close request     Code = 3
+
+      parameter   size
+      ------------------
+      code          1
+
+
+Response Design
+===========================================================
+
+Init response
+-------------------------------------------
+  Since, client will do a blocking read, msg code is not required.
+      parameter   size
+      ------------------
+      result          1
+      errno           4 (if result is 0)
+      shm name        variable with null termination (if result is 1)
