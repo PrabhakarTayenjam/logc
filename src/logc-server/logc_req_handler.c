@@ -23,8 +23,10 @@
  */
 
 #include "logc_req_handler.h"
-#include "logc_utils.h"
-#include "../logc_buffer.h"
+#include "logc_server.h"
+#include "logc_server_utils.h"
+#include "../common/logc_buffer.h"
+#include "../common/logc_utils.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,41 +40,6 @@
 #include <glib.h>
 
 
-// Request codes
-#define REQUEST_INIT            1
-#define REQUEST_WRITE           2
-#define REQUEST_CLOSE           3
-
-
-
-/**
- * Create a shared memory with the given name in read write mode.
- * And map the file to memory.
- * 
- * @param name name of the shared memory file
- * @return address of mapped memory
- */
-static void *
-create_shared_mem(char *name)
-{
-    int fd = shm_open(name, O_CREAT | O_RDWR, 0666);
-    if(fd == -1) {
-        logc_server_log("Cannot create shared memory file: %s, error: %s", name, strerror(errno));
-        return NULL;
-    }
-
-    ftruncate(fd, MAX_LOG_BUFF_SIZE);
-
-    void *addr = mmap(NULL, MAX_LOG_BUFF_SIZE, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
-    if(addr == MAP_FAILED) {
-        logc_server_log("Cannot create memory map. name: %s, error: %s", name, strerror(errno));
-        return NULL;
-    }
-
-    close(fd);
-    return addr;
-}
-
 /**
  * Process init request 
  * Get the append mode and log file path from the request buffer 
@@ -84,7 +51,7 @@ create_shared_mem(char *name)
  * @param client_fd fd of the client
  * @param req_buffer request buffer that was sent by the client
  */
-void
+static void
 process_init_req(int client_fd, uint8_t *req_buff)
 {
     uint8_t success = 1;
@@ -115,7 +82,7 @@ process_init_req(int client_fd, uint8_t *req_buff)
         handle->mmap_addr = addr;
 
         // map shared memory to log_buffer
-        handle->log_buff = (char *)addr;
+        logc_buffer_map(handle->log_buff, addr);
 
         // Open file
         char *mode;
@@ -136,17 +103,19 @@ process_init_req(int client_fd, uint8_t *req_buff)
         break;
     }
 
-    uint8_t *resp_buff[MAX_WRITE_BUFF_SIZE];
+    uint8_t resp_buff[MAX_WRITE_BUFF_SIZE];
     memcpy(resp_buff, &success, sizeof(uint8_t));
+
     if(success) {
         memcpy(resp_buff + 1, shm_name, strlen(shm_name) + 1);
         logc_server_log("Log init success");
     } else {
+        memcpy(resp_buff + 1, &errno, sizeof(int));
         logc_server_log("Log init failed");
     }
 
     // Send response to client
-    if(write(client_fd, shm_name, strlen(shm_name)) <= 0)
+    if(write(client_fd, resp_buff, MAX_WRITE_BUFF_SIZE) <= 0)
         logc_server_log("Cannot sent init response to client. fd: %d", client_fd);
     else
         logc_server_log("Init response sent to client. fd: %d", client_fd);
@@ -163,37 +132,17 @@ process_write_req(int client_fd, uint8_t *req_buff)
         return;
     }
 
-    int *r_offset;
-    int *w_offset;
-    int *marker;
-
-    void *ptr = req_buff + 1; // +1 for code
-    r_offset = (int *)ptr;
-    ptr += sizeof(int);
-    w_offset = (int *)ptr;
-    ptr += sizeof(int);
-    marker = (int *)ptr;
-
     // Read logs
-    int n;
     char read_buff[MAX_LOG_BUFF_SIZE];
-    if(*r_offset < *w_offset) {
-        n = *w_offset - *r_offset;
-        memcpy(read_buff, handle->log_buff + *r_offset, n);
-        read_buff[n] = '\0';
+    int n = logc_buffer_read_all(handle->log_buff, read_buff);
+  
+    if(n == 0) {
+        logc_server_log("Nothing to write");
+    } else {
+        fprintf(handle->fp, "%s", read_buff);
+        fflush(handle->fp);
+        logc_server_log("Written %d bytes to log file: %s", n, handle->log_file_path);
     }
-    else {
-        int n = *marker - *r_offset;
-        memcpy(read_buff, handle->log_buff + *r_offset, n);
-        memcpy(read_buff + n, handle->log_buff, *w_offset);
-        n += *w_offset;
-        read_buff[n] = '\0';
-    }
-
-    fprintf(handle->fp, "%s", read_buff);
-    fflush(handle->fp);
-
-    logc_server_log("Written %d bytes to log file: %s", n, handle->log_file_path);
 }
 
 void
@@ -210,10 +159,9 @@ process_req(void *args)
     int fd = req->fd;
     uint8_t *buffer = req->buffer;
 
-    logc_server_log("Processing request. fd = %d", fd);    
+    logc_server_log("Processing request. fd = %d", fd);
 
     uint8_t *req_type = (uint8_t *)buffer;
-
     logc_server_log("Received request. type: %d", *req_type);
 
     switch(*req_type) {
