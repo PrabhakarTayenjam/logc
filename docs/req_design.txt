@@ -96,9 +96,6 @@ Write request     Code = 2
       parameter   size
       ------------------
       code          1
-      r_offset      4
-      w_offset      4
-      marker        4
 
 
 Close request     Code = 3
