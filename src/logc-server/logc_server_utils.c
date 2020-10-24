@@ -101,8 +101,10 @@ void close_client(int fd)
     int n = logc_buffer_read_all(handle->log_buff, read_buff);
 
     // write to file
-    if(n > 0)
+    if(n > 0) {
         fprintf(handle->fp, "%s", read_buff);
+        logc_server_log("Written %d bytes to log file: %s", n, handle->log_file_path);
+    }
 
     // Flush the log messages in buffer and close the fp
     fflush(handle->fp);
