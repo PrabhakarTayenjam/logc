@@ -22,17 +22,12 @@
  * SOFTWARE.
  */
 
-#include "../logc_buffer.h"
+#include "../common/logc_buffer.h"
+#include "../common/logc_utils.h"
 
 #include <glib.h>
 #include <stdint.h>
 #include <stdio.h>
-
-#define MAX_READ_BUFF_SIZE 128
-#define MAX_WRITE_BUFF_SIZE 128
-#define MAX_FILE_PATH_SIZE 128
-#define MAX_LOG_BUFF_SIZE 1024 * 16
-
 
 // Epoll interface
 extern int epoll_fd;
@@ -40,11 +35,14 @@ extern int epoll_fd;
 // Hash table to store client information
 extern GHashTable *client_info_ht;
 
+// logc server log file path
+extern int server_log_fd;
+
 struct logc_client_info
 {
     uint8_t append;
     char log_file_path[MAX_FILE_PATH_SIZE];
-    char *log_buff;
+    struct logc_buffer *log_buff;
     FILE *fp;
     void *mmap_addr;
 };
