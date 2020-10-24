@@ -22,8 +22,10 @@
  * SOFTWARE.
  */
 
+
+#include "logc_server.h"
 #include "logc_req_handler.h"
-#include "logc_utils.h"
+#include "logc_server_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,20 +37,25 @@
 #include <glib.h>
 #include <signal.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/epoll.h>
 
-#define LOGC_SERVER_SOCKET_PATH "/dev/shm/logc.server"
-#define LOGC_MAX_CLIENTS 10
-#define EPOLL_MAX_EVENTS LOGC_MAX_CLIENTS
-#define EPOLL_TIMEOUT 1000
+#define LOGC_SERVER_SOCKET_PATH   "/dev/shm/logc.server"
+#define LOGC_MAX_CLIENTS          10
+#define EPOLL_MAX_EVENTS          LOGC_MAX_CLIENTS
+#define EPOLL_TIMEOUT             1000
 
 // Hash table to store client information
 GHashTable *client_info_ht;
 
 // Epoll interface
 int epoll_fd;
+
+// Server log fd for logging
+int server_log_fd;
 
 volatile int running = 1;
 
@@ -65,6 +72,12 @@ main(int argc, char **argv)
     signal(SIGINT, sigint_handler);
 
     int ret; // for checking return values
+
+    // Server logs
+    server_log_fd = open("logc_server.log", O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if(server_log_fd == -1) {
+        fprintf(stderr, "Logc-server start failed: Cannot create server log file, %s\n", strerror(errno));
+    }
 
     // Init hash table
     client_info_ht = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, free);
@@ -116,7 +129,7 @@ main(int argc, char **argv)
 
         // If running != 1, epoll wait was interrupted
         if(n_ready_events < 0 && running == 1)
-            exit_with_errno();
+            continue; //exit_with_errno();
 
         if(n_ready_events == 0)
             continue;
@@ -141,9 +154,7 @@ main(int argc, char **argv)
 
                     // Read
                     uint8_t buffer[MAX_READ_BUFF_SIZE];
-                    int rb;
-
-                    rb = read(fd, buffer, MAX_READ_BUFF_SIZE);
+                    int rb = read(fd, buffer, MAX_READ_BUFF_SIZE);
                     if(rb <= 0) {
                         if(rb == 0)
                             logc_server_log("Connection closed. fd = %d", fd);
