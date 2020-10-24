@@ -1,3 +1,10 @@
+# Project defined
+bin
+*.log
+.vscode
+notes
+rnd
+
 # Prerequisites
 *.d
 
