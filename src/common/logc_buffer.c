@@ -29,7 +29,7 @@
 #include <stdio.h>
 
 #ifdef LOGC_DEBUG
-#include "../common/logc_utils.h"
+#include "logc_utils.h"
 #endif
 
 int
@@ -52,8 +52,10 @@ logc_buffer_write(struct logc_buffer *handle, char *msg, int len)
             if(w < handle->size) // some thread chaged the w_offset, already wraped around
                 break;
 
-            if(__atomic_compare_exchange_n(&(handle->w_offset), &w, 0, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            if(__atomic_compare_exchange_n(&(handle->w_offset), &w, 0, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+                // console_log("Wrap around. w_offset: %d", w);
                 break;
+            }
         }
 
         // get new l_write
@@ -64,10 +66,10 @@ logc_buffer_write(struct logc_buffer *handle, char *msg, int len)
 
     int l_used = __atomic_add_fetch(&(handle->used), len, __ATOMIC_RELAXED);
     
-    console_log("\nused: %d, threshold: %d\n\n", l_used, handle->threshold);
-
-    if(l_used > handle->threshold)
+    if(l_used > handle->threshold) {
+        console_log("Threshold reached: threshold: %d, used: %d, l_write: %d", handle->threshold, l_used, l_write);
         return 1;
+    }
 
     return 0;
 }
@@ -80,8 +82,10 @@ logc_buffer_read_all(struct logc_buffer *handle, char *read_buff)
     int w_offset;
     int marker;
 
-    if(!__atomic_compare_exchange_n(&(handle->read_lock), &zero, 1, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+    if(!__atomic_compare_exchange_n(&(handle->read_lock), &zero, 1, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        console_log("Already read");
         return 0;
+    }
 
     r_offset = __atomic_load_n(&(handle->r_offset), __ATOMIC_RELAXED);
     w_offset = __atomic_load_n(&(handle->w_offset), __ATOMIC_RELAXED);

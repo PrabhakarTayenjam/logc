@@ -94,6 +94,8 @@ process_init_req(int client_fd, uint8_t *req_buff)
             break;
         }
 
+        handle->close_lock = 0;
+        
         // Add the info in hash table
         if(!g_hash_table_insert(client_info_ht, GINT_TO_POINTER(client_fd), handle)) {
             logc_server_log("Cannot insert client info to hash table");

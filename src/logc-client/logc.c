@@ -43,14 +43,6 @@
 #define RESP_BUFF_SIZE 128
 
 
-static inline int
-get_cur_time(char *buff, size_t sz)
-{
-    time_t cur_time = time(NULL);
-    int n = strftime(buff, sz, "%c", localtime(&cur_time));
-    return n;
-}
-
 /**
  * Log msg format
  * date time | file | func | line | msg
@@ -62,7 +54,8 @@ void write_log_to_buffer__(struct logc_handle *handle, char * file, char *func, 
     int len = 0;
 
     // fill date time
-    len += get_cur_time(buff, 1024);
+    time_t cur_time = time(NULL);
+    len += strftime(buff, 1024, "%c", localtime(&cur_time));
     len += sprintf(buff + len, " | %s | %s | %d | ", file, func, line);
 
     va_start(va_args, format);
@@ -165,7 +158,7 @@ logc_connect(struct logc_handle *handle)
     // Connect to logc server
     ret = connect(handle->fd, (struct sockaddr *)(&logc_server_addr), sizeof(logc_server_addr));
     if(ret == -1) {
-        printf("\n\nerror: %s\n\n", strerror(errno));
+        console_log("error: %s\n\n", strerror(errno));
         return -1;
     }
 

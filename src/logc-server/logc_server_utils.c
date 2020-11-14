@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -49,6 +50,7 @@ void server_log(char *file, int line, char *func, char *format, ...)
     n += sprintf(log_buff + n, "\n");
 
     write(server_log_fd, log_buff, n);
+    printf("%s", log_buff);
 }
 #endif
 
@@ -92,7 +94,19 @@ void close_client(int fd)
     struct logc_client_info *handle;
     handle = g_hash_table_lookup(client_info_ht, GINT_TO_POINTER(fd));
     if(handle == NULL) {
-        logc_server_log("Client info not found. client_fd: %d", fd);
+        logc_server_log("Client info not found. Already closed. client_fd: %d", fd);
+        return;
+    }
+
+    // remove from hash table. This will free client info for fd
+    g_hash_table_remove(client_info_ht, GINT_TO_POINTER(fd));
+
+    // Check if another close process is in progress.
+    // This may happen in case of client sending close request and terminating just after it
+    int zero = 0;
+    if(!__atomic_compare_exchange_n(&(handle->close_lock), &zero, 1, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+    {
+        logc_server_log("Already closed. client_fd: %d", fd);
         return;
     }
 
@@ -114,7 +128,4 @@ void close_client(int fd)
     munmap(handle->mmap_addr, MAX_LOG_BUFF_SIZE);
 
     logc_server_log("Client closed. fd = %d, log_file_path: %s", fd, handle->log_file_path);
-
-    // remove from hash table. This will free client info for fd
-    g_hash_table_remove(client_info_ht, GINT_TO_POINTER(fd));
 }

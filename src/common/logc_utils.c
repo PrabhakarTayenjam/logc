@@ -42,7 +42,7 @@ console_log__(char *file, char *function, int line, char *format, ...)
 
     va_list va_args;
     va_start(va_args, format);
-    vsnprintf(log_buff + n, 512 - n, format, va_args);
+    vsprintf(log_buff + n, format, va_args);
 
     printf("%s\n", log_buff);
 }

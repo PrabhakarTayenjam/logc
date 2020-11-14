@@ -43,6 +43,12 @@ void server_log(char *file, int line, char *function, char *format, ...);
     exit(1); \
 }
 
+#define exit_with_errno_ex(msg) \
+{ \
+    logc_server_log((msg): %s\n", strerror(errno)); \
+    exit(1); \
+}
+
 #else
 #define logc_server_log(...)
 #endif

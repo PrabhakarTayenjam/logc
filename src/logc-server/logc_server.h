@@ -28,6 +28,7 @@
 #include <glib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <pthread.h>
 
 // Epoll interface
 extern int epoll_fd;
@@ -40,9 +41,12 @@ extern int server_log_fd;
 
 struct logc_client_info
 {
+    int fd;
+    pthread_t tid;
     uint8_t append;
     char log_file_path[MAX_FILE_PATH_SIZE];
     struct logc_buffer *log_buff;
     FILE *fp;
     void *mmap_addr;
+    int close_lock;
 };

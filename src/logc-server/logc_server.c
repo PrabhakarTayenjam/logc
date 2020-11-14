@@ -45,8 +45,8 @@
 
 #define LOGC_SERVER_SOCKET_PATH   "/dev/shm/logc.server"
 #define LOGC_MAX_CLIENTS          10
-#define EPOLL_MAX_EVENTS          LOGC_MAX_CLIENTS
-#define EPOLL_TIMEOUT             1000
+#define EPOLL_MAX_EVENTS          10
+#define EPOLL_TIMEOUT             3000
 
 // Hash table to store client information
 GHashTable *client_info_ht;
@@ -58,6 +58,96 @@ int epoll_fd;
 int server_log_fd;
 
 volatile int running = 1;
+
+void *
+client_thread(void *args)
+{
+    struct logc_client_info *client_info = (struct logc_client_info *)args;
+
+    // Create epoll for client
+    int client_epoll_fd = epoll_create(1);
+    if(epoll_fd == -1) {
+        logc_server_log("Cannot create epoll: %s", strerror(errno));
+        free(args);
+        return NULL;
+    }
+
+    // Add client fd to epoll
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.fd = client_info->fd;
+    
+    int ret = epoll_ctl(client_epoll_fd, EPOLL_CTL_ADD, client_info->fd, &ev);
+    if(ret == -1) {
+        free(args);
+        return NULL;
+    }
+
+    // Epoll wait
+    int n_ready_events;
+    struct epoll_event events[EPOLL_MAX_EVENTS];
+    memset(events, 0, sizeof(struct epoll_event) * EPOLL_MAX_EVENTS);
+
+    while(1) {
+        n_ready_events = epoll_wait(client_epoll_fd, events, EPOLL_MAX_EVENTS, EPOLL_TIMEOUT);
+
+        if(n_ready_events == 0)
+            continue;
+
+        for(int i = 0; i < n_ready_events; ++i) {
+            if(events[i].events & (EPOLLERR | EPOLLHUP)) {
+                // Error occured, exit thread
+                logc_server_log("Client disconnected");
+                close_client(client_info->fd);
+                free(args);
+                return NULL;
+            }
+
+            if(events[i].events & EPOLLIN) {
+                // Request received from client
+                logc_server_log("Request received from client: %d", client_info->fd);
+
+                // Read
+                uint8_t buffer[MAX_READ_BUFF_SIZE];
+                
+                int rb = read(client_info_fd, buffer, MAX_READ_BUFF_SIZE);
+                if(rb <= 0) {
+                    logc_server_log("Read failed. fd = %d, error: %s", client_info->fd, strerror(errno));
+                    close_client(client_info->fd);
+                    free(args);
+                    return NULL;
+                }
+
+                // Process request
+                process_request(client_info, buffer);
+            }
+        } // end of for loop
+    }
+}
+
+static void
+handle_client_connection(int listen_fd)
+{
+    struct sockaddr_un client_addr;
+    int client_fd;
+    unsigned int len;
+
+    client_fd = accept(listen_fd, (struct sockaddr *)(&client_addr), &len);
+    if(client_fd == -1) {
+        logc_server_log("Cannot accept connection: %s", strerror(errno));
+        return;
+    }
+
+    logc_server_log("Accepted connection from client. fd: %d", client_fd);
+
+    struct logc_client_info *client_info = malloc(sizeof(struct logc_client_info));
+    client_info.fd = client_fd;
+
+    if(pthread_create(&client_info->tid, NULL, client_thread, client_info) != -) {
+        logc_server_log("Cannot initialise request handler: %s", strerror(errno));
+        return;
+    }
+}
 
 void
 sigint_handler(int sig)
@@ -88,16 +178,16 @@ main(int argc, char **argv)
         exit_with_errno();
 
     // Create server listen fd
-    int listen_fd;
-    listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if(listen_fd == -1)
+    int logc_server_fd;
+    logc_server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if(logc_server_fd == -1)
         exit_with_errno();
 
     // Add server listen fd to epoll
     struct epoll_event ev;
     ev.events = EPOLLIN;
-    ev.data.fd = listen_fd;
-    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, listen_fd, &ev);
+    ev.data.fd = logc_server_fd;
+    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, logc_server_fd, &ev);
     if(ret == -1)
         exit_with_errno();
     
@@ -108,12 +198,12 @@ main(int argc, char **argv)
 
     // Bind the address
     unlink(LOGC_SERVER_SOCKET_PATH);
-    ret = bind(listen_fd, (struct sockaddr *)(&server_addr), sizeof(server_addr));
+    ret = bind(logc_server_fd, (struct sockaddr *)(&server_addr), sizeof(server_addr));
     if(ret == -1)
         exit_with_errno();
 
     // Listen
-    ret = listen(listen_fd, LOGC_MAX_CLIENTS);
+    ret = listen(logc_server_fd, LOGC_MAX_CLIENTS);
     if(ret == -1)
         exit_with_errno();
 
@@ -136,44 +226,14 @@ main(int argc, char **argv)
 
         for(int i = 0; i < n_ready_events; ++i) {
             if(events[i].events & EPOLLERR || events[i].events & EPOLLHUP) {
-                logc_server_log("Client disconnected. fd: %d", events[i].data.fd);
-                close_client(events[i].data.fd);
                 continue;
             }
             if(events[i].events & EPOLLIN) {
-                if(events[i].data.fd == listen_fd) {
-                    // New client trying to connect.
-                    logc_server_log("New connection request received");
-                    
-                    // accept connection and add to epoll
-                    accept_conn_and_add_to_epoll(listen_fd);
-                } else {
-                    // Request recieved from clients
-                    int fd = events[i].data.fd;
-                    logc_server_log("Request received from client: %d", fd);
-
-                    // Read
-                    uint8_t buffer[MAX_READ_BUFF_SIZE];
-                    int rb = read(fd, buffer, MAX_READ_BUFF_SIZE);
-                    if(rb <= 0) {
-                        if(rb == 0)
-                            logc_server_log("Connection closed. fd = %d", fd);
-                        else
-                            logc_server_log("Cannot read request. fd = %d, error: %s", fd, strerror(errno));
-                        
-                        close_client(fd);
-                        continue;
-                    }
-
-                    struct logc_request req;
-                    req.fd = fd;
-                    req.buffer = buffer;
-
-                    pthread_t tid;
-                    ret = pthread_create(&tid, NULL, process_req, &req);
-                    if(ret == -1)
-                        logc_server_log("Cannot process request. fd = %d", fd);
-                }
+                // New client trying to connect.
+                logc_server_lo("New connection request received");
+                   
+                // create a thread and handle client separately
+                handle_client_connection(logc_server_fd);
             }
         }
     }
