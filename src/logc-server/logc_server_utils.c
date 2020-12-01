@@ -22,99 +22,42 @@
  * SOFTWARE.
  */
 
-#include "logc_server.h"
 #include "logc_server_utils.h"
 
 #include <stdio.h>
 #include <stdarg.h>
-#include <errno.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/epoll.h>
-#include <sys/mman.h>
+#include <stdint.h>
+#include <string.h>
+#include <errno.h>
 
+#define SERVER_LOG_BUFF_SIZE 1024
 
-#ifdef SERVER_LOG_ENABLE
-void server_log(char *file, int line, char *func, char *format, ...)
+/**
+ * write log messages to server log file
+ */
+void server_log(int log_file_fd, char *file, int line, char *func, char *format, ...)
 {
-    char log_buff[1024];
-    int n = sprintf(log_buff, "%s | %d | %s | ", file, line, func);
+    char log_buff[SERVER_LOG_BUFF_SIZE];
+    int n = snprintf(log_buff, SERVER_LOG_BUFF_SIZE, "%s | %d | %s | ", file, line, func);
 
     va_list va_args;
     va_start(va_args, format);
-    n += vsprintf(log_buff + n, format, va_args);
-    
-    n += sprintf(log_buff + n, "\n");
+    n += vsnprintf(log_buff + n, SERVER_LOG_BUFF_SIZE - n, format, va_args);
+    n += snprintf(log_buff + n, SERVER_LOG_BUFF_SIZE - n, "\n");
 
-    write(server_log_fd, log_buff, n);
+    write(log_file_fd, log_buff, n);
 }
-#endif
 
 int
-accept_conn_and_add_to_epoll(int listen_fd)
+send_response(int fd, uint8_t *buffer, int len)
 {
-    struct sockaddr_un client_addr;
-    
-    int client_fd;
-    unsigned int len;
-    client_fd = accept(listen_fd, (struct sockaddr *)(&client_addr), &len);
-    if(client_fd == -1) {
-        logc_server_log("Cannot accept connection: %s", strerror(errno));
-        return -1;
-    }
-    logc_server_log("Accepted connection from client. fd: %d", client_fd);
+    int wb = write(fd, buffer, len);
 
-    struct epoll_event ev;
-    ev.events = EPOLLIN;
-    ev.data.fd = client_fd;
-    int ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
-    if(ret == -1) {
-        logc_server_log("Cannot add to epoll: %s", strerror(errno));
-        return -1;
-    }
-    logc_server_log("Added to epoll. client fd: %d", client_fd);
-    
-    return 0;
-}
+    if(wb < 0)
+        logc_server_log("Cannot send response to client. fd: %d, error: ", fd, strerror(errno));
+    else
+        logc_server_log("Response sent to client. fd: %d", fd);
 
-void close_client(int fd)
-{
-    /**
-     * close and remove from epoll
-     * closing a fd automatically removes the fd from epoll (if all the fd references are closed)
-     */
-    close(fd);
-    // epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-
-    // Get client details from  client info hash table
-    struct logc_client_info *handle;
-    handle = g_hash_table_lookup(client_info_ht, GINT_TO_POINTER(fd));
-    if(handle == NULL) {
-        logc_server_log("Client info not found. client_fd: %d", fd);
-        return;
-    }
-
-    // Read logs if there is any
-    char read_buff[MAX_LOG_BUFF_SIZE];
-    int n = logc_buffer_read_all(handle->log_buff, read_buff);
-
-    // write to file
-    if(n > 0) {
-        fprintf(handle->fp, "%s", read_buff);
-        logc_server_log("Written %d bytes to log file: %s", n, handle->log_file_path);
-    }
-
-    // Flush the log messages in buffer and close the fp
-    fflush(handle->fp);
-    fclose(handle->fp);
-
-    // unmap memory
-    munmap(handle->mmap_addr, MAX_LOG_BUFF_SIZE);
-
-    logc_server_log("Client closed. fd = %d, log_file_path: %s", fd, handle->log_file_path);
-
-    // remove from hash table. This will free client info for fd
-    g_hash_table_remove(client_info_ht, GINT_TO_POINTER(fd));
+    return wb;
 }

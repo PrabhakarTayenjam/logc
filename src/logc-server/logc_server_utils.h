@@ -26,43 +26,36 @@
 #define LOGC_SERVER_UTILS
 
 #include <stdio.h>
+#include <stdint.h>
 
-#define SERVER_LOG_ENABLE 1
+
+extern int server_log_enable;
+extern int server_log_fd;
 
 
-#ifdef SERVER_LOG_ENABLE
+void server_log(int log_file_fd, char *file, int line, char *function, char *format, ...);
 
-void server_log(char *file, int line, char *function, char *format, ...);
-
-#define logc_server_log(...) \
-    server_log(__FILE__, __LINE__, (char *)__func__, __VA_ARGS__)
-
-#define exit_with_errno() \
+#define logc_server_log(...) do\
 { \
-    logc_server_log("Logc server error: %s\n", strerror(errno)); \
+    if(server_log_enable) \
+        server_log(server_log_fd, __FILE__, __LINE__, (char *)__func__, __VA_ARGS__); \
+} while(0)
+
+#define exit_with_errno() do\
+{ \
+    fprintf(stderr, "Logc server error: %s\n", strerror(errno)); \
     exit(1); \
-}
-
-#else
-#define logc_server_log(...)
-#endif
+} while(0)
 
 /**
- * Accept the connection from listen_fd and add the fd to epoll_fd
- * 
- * @param epoll_fd fd for the epoll interface
- * @param listen_fd Logc server listen fd
- * @return -1 if failed, 0 is success
- **/
-int accept_conn_and_add_to_epoll(int listen_fd);
-
-/**
- * Close the connection with the client 
- * Write the log messages in the buffer to the log file
- * Cleanup its realated informations
- * 
- * @param fd File descriptor of the client
+ * Send response to a client
+ *
+ * @param fd: connection fd to the client
+ * @param buffer: message buffer
+ * @param len: len of the message buffer to be sent
+ *
+ * @returns size in bytes sent to the client, -1 on failure
  */
-void close_client(int fd);
+int send_response(int fd, uint8_t *buffer, int len);
 
 #endif

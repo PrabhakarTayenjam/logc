@@ -1,15 +1,17 @@
 BIN = bin
-CC = cc
-CFLAGS = -g -Wall `pkg-config --cflags glib-2.0` -DLOGC_DEBUG
-LDFLAGS = -lpthread -lrt -lglib-2.0
-INCLUDE = -I /usr/include/glib-2.0
+CC = gcc
+CFLAGS = -g -Wall
+LDFLAGS = -lpthread -lrt
 COMMON = ../common/bin/logc_utils.o ../common/bin/logc_buffer.o
 OBJS = $(BIN)/logc_req_handler.o $(BIN)/logc_server_utils.o $(BIN)/logc_server.o $(COMMON)
 
-all: clean build release
+all: clean mkbin build release
 
 clean:
 	rm -rf $(BIN)/*
+
+mkbin:
+	mkdir -p $(BIN)
 
 build: logc-server-utils logc-req-handler logc-server
 

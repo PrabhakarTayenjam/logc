@@ -23,22 +23,29 @@
  */
 
 
-#ifndef LOGC_REQ_HANDER
-#define LOGC_REQ_HANDER
+#ifndef LOGC_REQ_HANDLER_H
+#define LOGC_REQ_HANDLER_H
+
+#include "logc_server.h"
 
 #include <stdint.h>
 
-struct logc_request
-{
-    int fd;
-    uint8_t *buffer;
-};
 
 /**
- * Read the requests recieved from clients and process it
- * 
- * @param args args will have the fd of the client
+ * close the connection with the client
+ * write the log messages in the buffer to the log file
+ *
+ * @param c_info: information about the client
+ */
+void close_client(struct client_info *c_info);
+
+/**
+ * process client request
+ *
+ * @param c_info: information about the client
+ * @param req_buff: request buffer 
+ * @returns 0 on success, -1 on failure, 1 on client closed
  **/
-void *process_req(void *args);
+int process_client_request(struct client_info *c_info, uint8_t *req_buff);
 
 #endif

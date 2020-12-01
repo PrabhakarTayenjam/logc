@@ -22,27 +22,41 @@
  * SOFTWARE.
  */
 
+#ifndef LOGC_SERVER_H
+#define LOGC_SERVER_H
+
 #include "../common/logc_buffer.h"
 #include "../common/logc_utils.h"
 
-#include <glib.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <stdio.h>        // for FILE
+#include <pthread.h>      // for pthread_t
 
-// Epoll interface
-extern int epoll_fd;
 
-// Hash table to store client information
-extern GHashTable *client_info_ht;
-
-// logc server log file path
-extern int server_log_fd;
-
-struct logc_client_info
+struct client_info
 {
-    uint8_t append;
+    /* connection fd with the client*/
+    int fd;
+
+    /* epoll fd for the client */
+    int epoll_fd;
+
+    /* thread id for the client thread */
+    pthread_t tid;
+
+    /* append mode of the log file */
+    int  append;
+
+    /* absolute path of the log file for the client */
     char log_file_path[MAX_FILE_PATH_SIZE];
+
+    /* wait free ring buffer for storing log messages */
     struct logc_buffer *log_buff;
+
+    /* file pointer for the log file */
     FILE *fp;
+
+    /* start address of the memory mapped address */
     void *mmap_addr;
 };
+
+#endif

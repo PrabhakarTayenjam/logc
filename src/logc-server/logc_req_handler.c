@@ -37,69 +37,68 @@
 #include <sys/shm.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <glib.h>
 
 
 /**
  * Process init request 
+ *
+ * This functions will
  * Get the append mode and log file path from the request buffer 
  * Create a shared memory 
  * Open a file in the log file path 
- * Add the info to a hash table with fd as the key 
  * Respond success / failure to the client 
  * 
- * @param client_fd fd of the client
- * @param req_buffer request buffer that was sent by the client
+ * @param c_info: information related to client
+ * @param req_buffer: request buffer that was sent by the client
+ * @return 0 on success, -1 on failure
  */
-static void
-process_init_req(int client_fd, uint8_t *req_buff)
+static int
+process_init_req(struct client_info *c_info, uint8_t *req_buff)
 {
-    uint8_t success = 1;
+    uint8_t success = 0;
     char shm_name[MAX_FILE_PATH_SIZE];
 
-    logc_server_log("Recieved init request. fd = %d", client_fd);
+    /* parsing init request */
 
-    struct logc_client_info *handle =
-        (struct logc_client_info *) malloc(sizeof(struct logc_client_info));
-
-    // Parse request
-    uint8_t *ptr = req_buff + 1; // +1 for request code
-    handle->append = *ptr;
+    uint8_t *ptr = req_buff + 1;  // skip 1 byte for request code
+    c_info->append = *ptr;        // append mode
     ptr += 1; 
-    strcpy(handle->log_file_path, (char *)ptr);
+    strcpy(c_info->log_file_path, (char *)ptr); // log file path
 
-    logc_server_log("append: %d, log_file_path: %s", handle->append, handle->log_file_path);
+    logc_server_log("Init request received. append_mode: %d, log_file_path: %s", c_info->append, c_info->log_file_path);
 
+    // this loop will run once
     while(1) {
-        // Create a shared memory
-        sprintf(shm_name, "/logc_shm_client_%d", client_fd);
+        // create a shared memory
+        sprintf(shm_name, "/logc_shm_client_%d", c_info->fd);
         void *addr = create_shared_mem(shm_name);
         if(addr == NULL) {
-            logc_server_log("Cannot create shared memory");
-            success = 0;
+            logc_server_log("Cannot create shared memory. shm_name: %s, error: %s", shm_name, strerror(errno));
             break;
         }
-        handle->mmap_addr = addr;
+
+        // store shared memory addrress
+        c_info->mmap_addr = addr;
 
         // map shared memory to log_buffer
-        logc_buffer_map(handle->log_buff, addr);
+        logc_buffer_map(c_info->log_buff, addr);
 
-        // Open file
+        // set open mode for the log file
         char *mode;
-        if(handle->append == 1) mode = "a"; else mode = "w";
-        handle->fp = fopen(handle->log_file_path, mode);
-        if(handle->fp == NULL) {
-            logc_server_log("Cannot open log file: %s, error: %s", handle->log_file_path, strerror(errno));
-            success = 0;
+        if(c_info->append == 1)
+            mode = "a";
+        else
+            mode = "w";
+
+        // open the log file
+        c_info->fp = fopen(c_info->log_file_path, mode);
+        if(c_info->fp == NULL) {
+            logc_server_log("Cannot open log file: %s, error: %s", c_info->log_file_path, strerror(errno));
             break;
         }
 
-        // Add the info in hash table
-        if(!g_hash_table_insert(client_info_ht, GINT_TO_POINTER(client_fd), handle)) {
-            logc_server_log("Cannot insert client info to hash table");
-            success = 0;
-            break;
-        }
+        // all completed successfully
+        success = 1;
         break;
     }
 
@@ -115,68 +114,124 @@ process_init_req(int client_fd, uint8_t *req_buff)
     }
 
     // Send response to client
-    if(write(client_fd, resp_buff, MAX_WRITE_BUFF_SIZE) <= 0)
-        logc_server_log("Cannot sent init response to client. fd: %d", client_fd);
-    else
-        logc_server_log("Init response sent to client. fd: %d", client_fd);
+    if(send_response(c_info->fd, resp_buff, MAX_WRITE_BUFF_SIZE) < 0)
+        success = 0;
+
+    if(success)
+        return 0;
+    return -1;
 }
 
-void
-process_write_req(int client_fd, uint8_t *req_buff)
+/**
+ * Read from the logc_buff and write to the log file
+ *
+ * @param c_info: information related to client
+ * @param req_buff: request buffer
+ * @returns 0
+ *
+ * Note: This functions always succeeds
+ */
+static int
+process_write_req(struct client_info *c_info, uint8_t *req_buff)
 {
-    logc_server_log("Received write request. fd: %d", client_fd);
-
-    struct logc_client_info *handle = g_hash_table_lookup(client_info_ht, GINT_TO_POINTER(client_fd));
-    if(handle == NULL) {
-        logc_server_log("Write failed. Client info not found. fd: %d", client_fd);
-        return;
-    }
+    logc_server_log("Received write request. fd: %d", c_info->fd);
 
     // Read logs
     char read_buff[MAX_LOG_BUFF_SIZE];
-    int n = logc_buffer_read_all(handle->log_buff, read_buff);
+    int n_bytes = logc_buffer_read_all(c_info->log_buff, read_buff);
   
-    if(n == 0) {
+    if(n_bytes == 0) {
         logc_server_log("Nothing to write");
-    } else {
-        fprintf(handle->fp, "%s", read_buff);
-        fflush(handle->fp);
-        logc_server_log("Written %d bytes to log file: %s", n, handle->log_file_path);
     }
+    else {
+        fprintf(c_info->fp, "%s", read_buff);
+        fflush(c_info->fp);
+        logc_server_log("Written %d bytes to log file: %s", n_bytes, c_info->log_file_path);
+    }
+
+    return 0;
+}
+
+/**
+ * Close the logc client
+ * Close all the related fds
+ *
+ * @param c_info: information related to the client
+ * @param req_buff: request buffer
+ *
+ * @returns 1
+ *
+ * Note: This functions always succeeds
+ */
+static int
+process_close_req(struct client_info *c_info, uint8_t *req_buff)
+{
+    logc_server_log("Received close request. fd: %d", c_info->fd);
+    close_client(c_info);
+
+    return 1;
 }
 
 void
-process_close_req(int client_fd, uint8_t *req_buff)
+close_client(struct client_info *c_info)
 {
-    logc_server_log("Received close request. fd: %d", client_fd);
-    close_client(client_fd);
-}
+    // close the client connection
+    close(c_info->fd);
 
-void *
-process_req(void *args)
-{
-    struct logc_request *req = (struct logc_request *)args;
-    int fd = req->fd;
-    uint8_t *buffer = req->buffer;
+    // close the client epoll fd
+    close(c_info->epoll_fd);
+   
+    // read logs if there is any
+    char read_buff[MAX_LOG_BUFF_SIZE];
+    int n_bytes = logc_buffer_read_all(c_info->log_buff, read_buff);
 
-    logc_server_log("Processing request. fd = %d", fd);
-
-    uint8_t *req_type = (uint8_t *)buffer;
-    logc_server_log("Received request. type: %d", *req_type);
-
-    switch(*req_type) {
-    case REQUEST_INIT:
-        process_init_req(fd, buffer);
-        break;
-    case REQUEST_WRITE:
-        process_write_req(fd, buffer);
-        break;
-    case REQUEST_CLOSE:
-        process_close_req(fd, buffer);
-        break;
-    default:
-        logc_server_log("Invalid request received: %d", *req_type);
+    // write to file
+    if(n_bytes > 0) {
+        fprintf(c_info->fp, "%s", read_buff);
+        logc_server_log("Written %d bytes to log file: %s", n_bytes, c_info->log_file_path);
     }
 
-    return NULL;
+    // flush the log file fp and close it
+    fflush(c_info->fp);
+    fclose(c_info->fp);
+
+    // unmap memory
+    munmap(c_info->mmap_addr, MAX_LOG_BUFF_SIZE);
+
+    logc_server_log("Client closed. fd = %d, log_file_path: %s", c_info->fd, c_info->log_file_path);
+}
+
+/**
+ * Process client request
+ *
+ * @param c_info: information related to client
+ * @param buffer: request buffer
+ *
+ * @returns 0 on success, -1 on failure, 1 on client closed
+ */
+int
+process_client_request(struct client_info *c_info, uint8_t *buffer)
+{
+    // get the request type
+    uint8_t req_type = *(uint8_t *)buffer;
+
+    logc_server_log("Processing request. fd: %d, type: %d", c_info->fd, req_type);
+
+    int ret;
+
+    switch(req_type) {
+    case REQUEST_INIT:
+        ret = process_init_req(c_info, buffer);
+        break;
+    case REQUEST_WRITE:
+        ret = process_write_req(c_info, buffer);
+        break;
+    case REQUEST_CLOSE:
+        ret = process_close_req(c_info, buffer);
+        break;
+    default:
+        logc_server_log("Invalid request received. fd: %d, type: %d", c_info->fd, req_type);
+    }
+
+    return ret;
 }
