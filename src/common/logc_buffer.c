@@ -37,7 +37,7 @@ logc_buffer_write(struct logc_buffer *handle, char *msg, int len)
 {
     int l_write = __atomic_fetch_add(&(handle->w_offset), len, __ATOMIC_RELAXED);
 
-    while(l_write + len > handle->size) {
+    while(l_write + len > (handle->size - 1)) {
         /**
          * Here l_write may be > size
          * There will never be a situation where while cond is true and below if cond is true
@@ -64,7 +64,7 @@ logc_buffer_write(struct logc_buffer *handle, char *msg, int len)
 
     int l_used = __atomic_add_fetch(&(handle->used), len, __ATOMIC_RELAXED);
     
-    console_log("\nused: %d, threshold: %d\n\n", l_used, handle->threshold);
+    // console_log("\nused: %d, threshold: %d\n\n", l_used, handle->threshold);
 
     if(l_used > handle->threshold)
         return 1;
@@ -94,7 +94,7 @@ logc_buffer_read_all(struct logc_buffer *handle, char *read_buff)
     handle->r_offset = w_offset; // No need atomic op. Only 1 thread can chage this value
     __atomic_sub_fetch(&(handle->used), len, __ATOMIC_RELAXED);
 
-    // No need atomic op. Only 1 thread can chage this value
+    // No need atomic op. Only 1 thread can change this value
     handle->read_lock = 0;
 
     // Now read the message
