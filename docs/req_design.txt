@@ -55,10 +55,7 @@ Logc Client Design
     * if failed, handle error
 * Collect log messages in the buffer
 * If the buffer usage threshold is reached, send write request
-  to the server with the following information.
-    * start offset
-    * end offset
-    * marker
+  to the server.
 * When the process is completed, send close request
 
 Logc Server Design
