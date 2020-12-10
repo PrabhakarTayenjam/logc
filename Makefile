@@ -6,10 +6,10 @@ LOGC_SERVER = $(SRC)/logc-server
 all: common logc-client logc-server
 
 common:
-	cd $(COMMON); make
+	cd $(COMMON); mkdir -p bin; make
 
 logc-client:
-	cd $(LOGC_CLIENT); make
+	cd $(LOGC_CLIENT); mkdir -p bin; make
 
 logc-server:
-	cd $(LOGC_SERVER); make
+	cd $(LOGC_SERVER); mkdir -p bin; make
