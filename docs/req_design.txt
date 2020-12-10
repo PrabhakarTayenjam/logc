@@ -2,6 +2,8 @@ Version history
 ===========================================================
 Initial version: 25-Sep-2020
 
+Changed to thread per connection model: 29-Nov-2020
+
 
 Introduction
 ===========================================================
@@ -13,7 +15,13 @@ afterwards because there will be less file I/O. But if the
 application crashes before writing the log messages in the
 log buffer to the file, important log messages will be lost.
 So, to mitigate this issue, the log buffer will be in a shared
-memory bewtween a log server and a log client.
+memory bewtween a log server and a log client. The log client
+will be running in the application which is doing the logging.
+So, when the application crashes, the log server will still
+have access to the log buffer and write the logs to the file.
+
+NOTE: Need to make sure all the negative cases are handled
+properly so that log server never crashes.
 
 Logc Requirement
 ===========================================================
@@ -25,12 +33,8 @@ Logc Requirement
 Logc server requirement
 ------------------------------------------------------------
 * Should be able to handle multiple clients
-* Server needs the following from a client:
-    * log file path
-    * append
-* Server needs to maintain a hashmap for client info with client
-  connection fd as key
-* Actions in server (init log, write log) will be perform according
+* A client will be handle by a separate thread. (thread per connection model) 
+* Actions in server (init log, write log etc) will be perform according
   to the request from client
 
 Logc client requirement
@@ -43,7 +47,7 @@ Logc Client Design
 ===========================================================
 * Send log init request to server with following informations:
     * log file path
-    * append
+    * append mode
 * Wait for response of server
     * if success, continue (a shared memory name will be return)
         * Create a shared memory with the name
@@ -60,21 +64,22 @@ Logc Client Design
 Logc Server Design
 ===========================================================
 * Init the server and wait for clients to connect
-* If a client connects for the first time, add entry to the hash map
+* If a client connects for the first time
+    * create a thread for that client
+    * create an epoll for that client
+    * wait for request from the client
 * If init request is recieved:
-    * add the information about the client in the hash map
     * create a unique shared memory file name
-    * create a shared memory with that file name and add to hash map
+    * create a shared memory with that file name
     * return the shared memory file name to the client
     * If failed, return the error code
 * If write request is recieved:
-    * Lookup the hash map and get the buffer
     * Write the buffer from start to end offset to the log file
 * If close request is recieved:
-    * Lookup the hash map and get the information about the client.
     * Write the log messages in buffer to the log file if there is any.
     * Close the file and free up memory.
 * If the client program crashes, handle as close request
+* If client disconnects, exit the thread
 
 
 Request Design
