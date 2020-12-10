@@ -25,6 +25,9 @@
 #ifndef LOGC_UTILS_H
 #define LOGC_UTILS_H
 
+
+
+#define LOGC_SERVER_SOCKET_PATH   "/dev/shm/logc.server"
 #define MAX_LOG_BUFF_SIZE     1024 * 16
 #define MAX_READ_BUFF_SIZE    128
 #define MAX_WRITE_BUFF_SIZE   128
