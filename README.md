@@ -19,5 +19,7 @@ Building logc
 </h2>
 
 `git clone https://github.com/PrabhakarTayenjam/logc.git`
+<br>
 `cd logc`
+<br>
 `make`
