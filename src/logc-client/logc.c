@@ -196,6 +196,9 @@ logc_connect(struct logc_handle *handle)
 int
 logc_close(struct logc_handle *handle)
 {
+    if(handle == NULL)
+        return 0;
+
     // Make request
     uint8_t code = REQUEST_CLOSE;
     uint8_t req_buff[REQ_BUFF_SIZE];
